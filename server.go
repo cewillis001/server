@@ -22,10 +22,13 @@ func CheckError(err error) {
     }
 }
 
-func DeleteChannel(done <-chan *net.UDPAddr, ch map[*net.UDPAddr]chan []byte){
+func DeleteChannel(done <-chan *net.UDPAddr, ch map[string]chan []byte){
 	for r := range done{
-		close(ch[r])
-		delete(ch, r)
+		fmt.Println(r, " is done")
+		//_,present := ch[r.String()]
+		//if(present) { fmt.Println(r, " channel in map ") }
+		close(ch[r.String()])
+		delete(ch, r.String())
 	}
 }
 
@@ -47,7 +50,7 @@ func main() {
 	m := map[string][]byte{} //creates map of empty files
 
 	/* map of channels to communicate with routines handling read/write requests */
-	ch := map[*net.UDPAddr](chan []byte){}
+	ch := map[string](chan []byte){}
 	/* channel for the one deleter go routine */
 	done := make(chan *net.UDPAddr)
 	defer close(done)
@@ -83,7 +86,7 @@ func main() {
 			case 1:
 				//handle RRQ
 				fmt.Println("Recived ", string(buf[0:n]), " from ", addr, " as RRQ")
-				filename, err := tftp.GetRRQname(buf)
+				filename, err := tftp.GetRRQname(buf[0:n])
 				if(err != nil){
 					//badly formed rrq packet
 					errCode := []byte {0, 0}
@@ -92,8 +95,8 @@ func main() {
 				} else {
 					_,present := m[filename]
 					if(present){
-						ch[addr] = make(chan []byte) //close old chans first, if present?
-						go tftp.HandleRRQ(filename, ch[addr], done, ServerConn, addr, m[filename])
+						ch[addr.String()] = make(chan []byte) 
+						go tftp.HandleRRQ(filename, ch[addr.String()], done, ServerConn, addr, m[filename])
 					} else {
 						errCode := []byte {0, 1}
 						errMsg  := filename + " not found"
@@ -104,7 +107,7 @@ func main() {
 			case 2:
 				//handle WRQ
 				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as WRQ")
-				filename, err := tftp.GetWRQname(buf)
+				filename, err := tftp.GetWRQname(buf[0:n])
 				if(err != nil){
 					errCode := []byte {0, 0}
 					errMsg  := "Badly formed WRQ packet"
@@ -116,31 +119,36 @@ func main() {
 						errMsg  := "No overwriting allowed"
 						tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 					}else{
-						ch[addr] = make(chan []byte)
-						fmt.Println(addr)
-						go tftp.HandleWRQ(filename, ch[addr], done, ServerConn, addr, newFile)
+						ch[addr.String()] = make(chan []byte)
+						//fmt.Println(addr)
+						_,present := ch[addr.String()]
+						if(present){
+							fmt.Println(addr, " added successfully to map")
+						}
+						go tftp.HandleWRQ(filename, ch[addr.String()], done, ServerConn, addr, newFile)
 					}	
 				}
+
 			case 3:
 				//handle DATA
 				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as DATA")
-				_,present := ch[addr]
+				_,present := ch[addr.String()]
 				if(present){
-					fmt.Println("channel is present")
-					ch[addr] <- buf
+					//fmt.Println("channel is present")
+					ch[addr.String()] <- buf[0:n]
 				} else {
 					errCode := []byte {0, 5}
 					errMsg  := "No write request associated with this return address"
 					fmt.Println(errMsg, " ", addr)
 					tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
-				}
+				} 
 
 			case 4:
 				//handle ACK
 				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as ACK")
-				_,present := ch[addr]
+				_,present := ch[addr.String()]
 				if(present){
-					ch[addr] <- buf
+					ch[addr.String()] <- buf[0:n]
 				} else {
 					errCode := []byte {0, 5}
 					errMsg  := "No read request associated with this return address"
@@ -155,23 +163,11 @@ func main() {
 					an errr tftp is sent to the originating host"
 				*/
 				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as ERROR")
-				_,present := ch[addr]
+				_,present := ch[addr.String()]
 				if(present){
-					close(ch[addr])
-					delete(ch, addr)
+					close(ch[addr.String()])
+					delete(ch, addr.String())
 				}
 		}
-/*
-		temp <- *newFile
-
-		_,present := m[temp.Name]
-    if(!present) {
-      m[newFile.Name] = newFile.Data
-    }else{
-      errCode := []byte {0, 6}
-      errMsg  := "No overwriting allowed"
-      tftp.SendERRORTo(errCode, errMsg, newFile.Conn, newFile.Raddr)
-    }
-	*/
 	}
 }
