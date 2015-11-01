@@ -34,12 +34,14 @@ func DeleteChannel(done <-chan *net.UDPAddr, ch map[string]chan []byte){
 
 func WriteFile(in <-chan *tftp.File, m map[string][]byte){
   for r := range in {
+		fmt.Println(r.Name, " to be written ")
     _,present := m[r.Name]
     if(!present) {
       m[r.Name] = r.Data
     }else{
       errCode := []byte {0, 6}
       errMsg  := "No overwriting allowed"
+			fmt.Println(errMsg)
       tftp.SendERRORTo(errCode, errMsg, r.Conn, r.Raddr)
     }
   }
@@ -111,12 +113,14 @@ func main() {
 				if(err != nil){
 					errCode := []byte {0, 0}
 					errMsg  := "Badly formed WRQ packet"
+					fmt.Println(errMsg, " from ", addr)
 					tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 				} else {
 					_,present := m[filename]
 					if(present){
 						errCode := []byte {0, 6}
 						errMsg  := "No overwriting allowed"
+						fmt.Println(errMsg)
 						tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 					}else{
 						ch[addr.String()] = make(chan []byte)
