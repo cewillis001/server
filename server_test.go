@@ -5,7 +5,7 @@ import (
     "net"
     "time"
 		"testing"
-		//"os"
+		"errors"
     "strconv"
 		"github.com/cewillis001/tftp"
 )
@@ -54,39 +54,34 @@ func sendFullWrite(filename string, content string){
 
 	/*send inital WRQ*/
 	tftp.SendWRQ(filename, Conn)
-  buf := make([]byte, 1024)
-  initialTimeout := time.After(time.Second * 15)
+  packet := make(chan []byte)
+	defer close(packet)
+	go getPacket(Conn, packet)
 
-	InitialAck:
-	for{
-		select {
-			case <-initialTimeout:
+	select {
+		case <- time.After(15 * time.Second):
 				fmt.Println("WRQ from ", LocalAddr, " never acknowledged")
 				return
-			default:
-				n,_,err := Conn.ReadFromUDP(buf)
-				checkError(err)
-				if(err != nil) { return }
-				switch buf[1]{
+		case r := <- packet:
+				switch r[1]{
 					case 4:
 						//ACK packet recieved
-						ackBlock, err := tftp.GetAckBlock(buf[0:n])
+						ackBlock, err := tftp.GetAckBlock(r)
 						if(err != nil){
 							errCode := []byte{0,0}
 							errMsg  := "badly formed ACK packet"
 							tftp.SendERROR(errCode, errMsg, Conn)
 							return
 						}
-						if(ackBlock[1] == block[1]) { break InitialAck }
+						if(ackBlock[1] == block[1]) { break }
 					
 					case 5:
 						//ERROR packet recieved
-						_, errMsg, err := tftp.GetError(buf[0:n])
+						_, errMsg, err := tftp.GetError(r)
 						if(err != nil){ return }
-						fmt.Println(errMsg, " recieved by ", LocalAddr)
+						fmt.Println(string(errMsg), " recieved by ", LocalAddr)
 						return			
 				}
-		}
 	}
 
 	SendLoop:
@@ -102,16 +97,13 @@ func sendFullWrite(filename string, content string){
 				case <- time.After(time.Second * 3):
 					tftp.SendDATA(block, data, Conn)
 				case <- time.After(time.Second * 15):
-					fmt.Println("DATA packet ", string(block), " from ", LocalAddr, " never acknowledge")
+					fmt.Println("DATA packet ", string(block), " from ", LocalAddr, " never acknowledged")
 					return
-				default:
-					n,_,err := Conn.ReadFromUDP(buf)
-					checkError(err)
-					if(err != nil) { return }
-					switch buf[1]{
+				case r := <- packet :
+					switch r[1]{
 						case 4:
 							//ACK packet recieved
-							ackBlock, err := tftp.GetAckBlock(buf[0:n])
+							ackBlock, err := tftp.GetAckBlock(r)
 							if(err != nil){
 								errCode := []byte{0,0}
 								errMsg  := "badly formed ACK packet"
@@ -122,11 +114,11 @@ func sendFullWrite(filename string, content string){
 
 						case 5:
 							//ERROR packet recieved
-							_, errMsg, err := tftp.GetError(buf[0:n])
+							_, errMsg, err := tftp.GetError(r)
 							if(err != nil){
 								return
 							}
-							fmt.Println(errMsg, " recieved by ", LocalAddr)
+							fmt.Println(string(errMsg), " recieved by ", LocalAddr)
 							return
 					}
 			}
@@ -146,9 +138,25 @@ func sendFullWrite(filename string, content string){
 	
 }
 
-func sendRead(filename string){
-	//this expects one short  (single packet) file
-  ServerAddr,err := net.ResolveUDPAddr("udp","127.0.0.1:10001")
+func getPacket(Conn *net.UDPConn, out chan<- []byte){
+	for{
+		buf := make([]byte, 1024)
+		n,_,err := Conn.ReadFromUDP(buf)
+		if(err == nil){
+			out <- buf[0:n]
+		} else {
+			return
+		}
+	}	
+}
+
+func sendFullRead(filename string) (string, error){
+		//sends RRQ
+		//loop:
+		//  listens for DATA with block ahead of prev ACK packet
+		//  send ACK packet for current DATA
+		//  if len(current DATA) < 512, send final ACK and close
+	ServerAddr,err := net.ResolveUDPAddr("udp","127.0.0.1:10001")
   checkError(err)
 
   LocalAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -156,52 +164,88 @@ func sendRead(filename string){
 
   Conn, err := net.DialUDP("udp", LocalAddr, ServerAddr)
   checkError(err)
-
   defer Conn.Close()
+
+	temp := []byte{}
   tftp.SendRRQ(filename, Conn)
+	prev_block := []byte{0, 0}
+	packet := make(chan []byte)
+	defer close(packet)
+	go getPacket(Conn, packet)
 
-  buf := make([]byte, 1024)
-  _,_,err = Conn.ReadFromUDP(buf)
-  checkError(err)
-  if(err != nil) {return }
+	Read:
+	for{
+		select {
+			case r := <- packet:
+				switch r[1]{
+					case 3:
+						//DATA packet recieved
+						block, data, err := tftp.GetData(r)
+						if(err != nil){ return "", err }
+						if(block[1] == prev_block[1] + 1){
+							tftp.SendACK(block, Conn)
+							prev_block[1] = block[1]
+							temp = append(temp, data...)
+							if(len(data) < 512) { break Read }
+						}else if( block[1] != 0 ){
+							tftp.SendACK(prev_block, Conn)
+						} // else the RRQ itself failed somehow
+				
+					case 5:
+						//ERROR packet recieved
+            _, errMsg, err := tftp.GetError(r)
+            if(err != nil){
+              return "", err
+            }
+            fmt.Println(string(errMsg), " recieved by ", LocalAddr)
+            return "", errors.New(string(errMsg))
+				}
+			case <- time.After(1 * time.Second) :
+				tftp.SendACK(prev_block, Conn)
 
-  block, data, err := tftp.GetData(buf)
-  checkError(err)
-  if(err != nil) {return}
-  if(len(block) >=2 && block[1] != 0){
-    fmt.Println("wrong block number in ACK to WRQ")
-  }
-	fmt.Println("Read ", string(data))
-	tftp.SendACK(block, Conn)
+			case <- time.After(15 * time.Second) :
+				fmt.Println("A read request by ", LocalAddr, " timed out")
+				return "", errors.New("rrq timed out")
+		}
+	}
+
+	return string(temp), nil
 }
-
-
 
 /* BEGIN TESTS */
 
 func TestOneWRQ(*testing.T) {
 		sendFullWrite("TestOneWRQ", "TestOneWRQ " + longFile)
-} 
+} // */ 
 
 func TestManyWRQ(*testing.T){
 	for i:=0; i < 5; i++ {
-		go sendFullWrite("TestManyWRQ" + strconv.Itoa(i), "Hello, World! Just " + strconv.Itoa(i) + " world, of course")
+		go sendFullWrite("TestManyWRQ" + strconv.Itoa(i), "Hello, World " + strconv.Itoa(i) + "! " + longFile)
 	}
-}
+} // */
 
-func TestOneRRQ(*testing.T) {
-	sendFullWrite("TestOneRRQ", "Test a read!")
-	sendRead("TestOneRRQ")
-}
+func TestOneRRQ(t *testing.T) {
+	temp := "Test a read! " + longFile
+	sendFullWrite("TestOneRRQ", temp )
+	read,err := sendFullRead("TestOneRRQ")
+	if(err != nil) { return }
+	if(len(temp) != len(read)){ 
+		t.FailNow() 
+	} else {
+		for i := 0; i < len(temp); i++ {
+			if( temp[i] != read[i] ) { t.FailNow() }
+		}
+	}
+} // */
 
 func TestManyRRQ(*testing.T) {
-	sendFullWrite("TestManyRRQ", "Testing many reads!")
+	sendFullWrite("TestManyRRQ", "Testing many reads! " + longFile)
 	for i:= 0; i < 5; i++ {
-		go sendRead("TestManyRRQ")
+		go sendFullRead("TestManyRRQ")
 	}
-}
+} // */
 
 func TestOneOverWrite(*testing.T) {
 	sendFullWrite("TestOneOverWrite", "TestOneOverWrite " + longFile)
 	sendFullWrite("TestOneOverWrite", "TestOneOverWrite, overwritten " + longFile)
-}
+} // */
