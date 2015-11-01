@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"flag"
 	"github.com/cewillis001/tftp"
 )
 
@@ -22,46 +23,68 @@ func CheckError(err error) {
     }
 }
 
-func DeleteChannel(done <-chan *net.UDPAddr, ch map[string]chan []byte){
+func DeleteChannel(done <-chan *net.UDPAddr, ch map[string]chan []byte, verbose *bool){
 	for r := range done{
-		fmt.Println(r, " is done")
-		//_,present := ch[r.String()]
-		//if(present) { fmt.Println(r, " channel in map ") }
+
+		if (*verbose) {
+			_,present := ch[r.String()]
+			if(present) { 
+				fmt.Println(r, " channel in map and scheduled for deletion") 
+			}else{
+				fmt.Println(r, " channel not in map, something is off")
+			}
+		}
+
 		close(ch[r.String()])
 		delete(ch, r.String())
+
+		if (*verbose) {
+			_,present := ch[r.String()]
+			if(present) {
+				fmt.Println(r, " was not deleted")
+			}else{
+				fmt.Println(r, " deleted")
+			}
+		}
+
 	}
 }
 
-func WriteFile(in <-chan *tftp.File, m map[string][]byte){
+func WriteFile(in <-chan *tftp.File, m map[string][]byte, verbose *bool){
   for r := range in {
-		fmt.Println(r.Name, " to be written ")
+		if(*verbose) { fmt.Println(r.Name, " to be written ") }
     _,present := m[r.Name]
     if(!present) {
       m[r.Name] = r.Data
     }else{
       errCode := []byte {0, 6}
       errMsg  := "No overwriting allowed"
-			fmt.Println(errMsg)
+			if(*verbose) { fmt.Println(errMsg) }
       tftp.SendERRORTo(errCode, errMsg, r.Conn, r.Raddr)
     }
   }
 }
 
 func main() {
+	/* flag for turning on verbose output */
+	verbose := flag.Bool("verbose", false, "a bool")
+  flag.Parse()
+
 	/* local memory for storing files */
 	m := map[string][]byte{} //creates map of empty files
 
 	/* map of channels to communicate with routines handling read/write requests */
 	ch := map[string](chan []byte){}
+
 	/* channel for the one deleter go routine */
 	done := make(chan *net.UDPAddr)
 	defer close(done)
-	go DeleteChannel(done, ch)
+	go DeleteChannel(done, ch, verbose)
 
 	/* channel for the one writer go routine */
  	newFile := make(chan *tftp.File)
 	defer close(newFile)
-	go WriteFile(newFile, m) 
+	go WriteFile(newFile, m, verbose) 
 
 	/* Lets prepare a address at any address at port 10001*/   
 	ServerAddr,err := net.ResolveUDPAddr("udp",":10001")
@@ -77,7 +100,6 @@ func main() {
 	for {
 		n,addr,err := ServerConn.ReadFromUDP(buf)
 		CheckError(err)
-		//fmt.Println("Received ",string(buf[0:n]), " from ",addr)
 
 		if(n < 2 || buf[0] != 0 || buf[1] == 0 || buf[1] > 5){
 			tftp.SendERRORTo([]byte{0, 0}, "bad opcode", ServerConn, addr)
@@ -87,18 +109,18 @@ func main() {
 		switch buf[1]{
 			case 1:
 				//handle RRQ
-				fmt.Println("Recived ", string(buf[0:n]), " from ", addr, " as RRQ")
+				if(*verbose) {fmt.Println("Recived ", string(buf[0:n]), " from ", addr, " as RRQ")}
 				filename, err := tftp.GetRRQname(buf[0:n])
 				if(err != nil){
-					//badly formed rrq packet
 					errCode := []byte {0, 0}
 					errMsg  := "Badly formed RRQ packet"
+					if(*verbose) {fmt.Println(errMsg, " from ", addr)}
 					tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 				} else {
 					_,present := m[filename]
 					if(present){
 						ch[addr.String()] = make(chan []byte) 
-						go tftp.HandleRRQ(filename, ch[addr.String()], done, ServerConn, addr, m[filename])
+						go tftp.HandleRRQ(filename, ch[addr.String()], done, ServerConn, addr, m[filename], verbose)
 					} else {
 						errCode := []byte {0, 1}
 						errMsg  := filename + " not found"
@@ -108,54 +130,55 @@ func main() {
 
 			case 2:
 				//handle WRQ
-				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as WRQ")
+				if(*verbose) {fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as WRQ")}
 				filename, err := tftp.GetWRQname(buf[0:n])
 				if(err != nil){
 					errCode := []byte {0, 0}
 					errMsg  := "Badly formed WRQ packet"
-					fmt.Println(errMsg, " from ", addr)
+					if(*verbose) {fmt.Println(errMsg, " from ", addr)}
 					tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 				} else {
 					_,present := m[filename]
 					if(present){
 						errCode := []byte {0, 6}
 						errMsg  := "No overwriting allowed"
-						fmt.Println(errMsg)
+						if(*verbose) { fmt.Println(errMsg) }
 						tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 					}else{
 						ch[addr.String()] = make(chan []byte)
-						//fmt.Println(addr)
 						_,present := ch[addr.String()]
-						if(present){
+						if(present && *verbose){
 							fmt.Println(addr, " added successfully to map")
 						}
-						go tftp.HandleWRQ(filename, ch[addr.String()], done, ServerConn, addr, newFile)
+						go tftp.HandleWRQ(filename, ch[addr.String()], done, ServerConn, addr, newFile, verbose)
 					}	
 				}
 
 			case 3:
 				//handle DATA
-				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as DATA")
+				if (*verbose) { fmt.Println("  Recieved ", string(buf[0:n]), " from ", addr, " as DATA")}
 				_,present := ch[addr.String()]
 				if(present){
-					//fmt.Println("channel is present")
+					if(*verbose) {fmt.Println("  ", addr, " channel is present")}
 					ch[addr.String()] <- buf[0:n]
 				} else {
 					errCode := []byte {0, 5}
 					errMsg  := "No write request associated with this return address"
-					fmt.Println(errMsg, " ", addr)
+					if(*verbose) {fmt.Println("  ", errMsg, " ", addr)}
 					tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 				} 
 
 			case 4:
 				//handle ACK
-				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as ACK")
+				if(*verbose) {fmt.Println("    Recieved ", string(buf[0:n]), " from ", addr, " as ACK")}
 				_,present := ch[addr.String()]
 				if(present){
+					if(*verbose) {fmt.Println("    ", addr, " channel is present")}
 					ch[addr.String()] <- buf[0:n]
 				} else {
 					errCode := []byte {0, 5}
 					errMsg  := "No read request associated with this return address"
+					if(*verbose) {fmt.Println("    ", errMsg, " ", addr) }
 					tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 				}
 
@@ -166,12 +189,8 @@ func main() {
 					"the source port of a recieved tftp is incorrect. in this case
 					an errr tftp is sent to the originating host"
 				*/
-				fmt.Println("Recieved ", string(buf[0:n]), " from ", addr, " as ERROR")
-				_,present := ch[addr.String()]
-				if(present){
-					close(ch[addr.String()])
-					delete(ch, addr.String())
-				}
+				if(*verbose){fmt.Println("      Recieved ", string(buf[0:n]), " from ", addr, " as ERROR")}
+				done <- addr
 		}
 	}
 }

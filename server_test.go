@@ -6,7 +6,7 @@ import (
     //"time"
 		"testing"
 		//"os"
-    "strconv"
+    //"strconv"
 		"github.com/cewillis001/tftp"
 )
  
@@ -72,17 +72,17 @@ func sendRead(filename string){
 	fmt.Println("Read ", string(data))
 	tftp.SendACK(block, Conn)
 }
-
+/*
 func TestOneWRQ(*testing.T) {
 		sendWrite("TestOneWRQ", "Hello, World! Just one world, of course")
-}
-
+} */
+/*
 func TestManyWRQ(*testing.T){
 	for i:=0; i < 5; i++ {
 		go sendWrite("TestManyWRQ" + strconv.Itoa(i), "Hello, World! Just " + strconv.Itoa(i) + " world, of course")
 	}
 }
-
+*/
 func TestOneRRQ(*testing.T) {
 	sendWrite("TestOneRRQ", "Test a read!")
 	sendRead("TestOneRRQ")
