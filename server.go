@@ -23,34 +23,6 @@ func CheckError(err error) {
 	}
 }
 
-func DeleteChannel(done <-chan *net.UDPAddr, ch map[string]chan []byte, verbose *bool) {
-	for r := range done {
-
-		if *verbose {
-			_, present := ch[r.String()]
-			if present {
-				fmt.Println(r, " channel in map and scheduled for deletion")
-			} else {
-				fmt.Println(r, " channel not in map, something is off")
-			}
-		}
-
-		close(ch[r.String()])
-		delete(ch, r.String())
-
-		if *verbose {
-			_, present := ch[r.String()]
-			if present {
-				fmt.Println(r, " was not deleted")
-			} else {
-				fmt.Println(r, " deleted")
-			}
-		}
-
-	}
-}
-
-
 func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmation chan<- bool, done <-chan *net.UDPAddr, get <-chan *net.UDPAddr, out chan<- chan []byte, verbose *bool){
 	ch := map[string](chan []byte) {}
 	for{
