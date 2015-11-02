@@ -16,8 +16,7 @@ var longFile string = "Lorem ipsum dolor sit amet, consectetuer adipiscing elit.
 
 //int controlling how many go routines to spawn for concurrency test
 //set low initially so a verbose test of the server is still manageable to read
-//max effective is about 250 on my machine, running Ubuntu 14.04 x64 with 512 Mb RAM
-var lots int = 5
+var lots int = 500
 
 func checkError(err error) {
 	if err != nil {

@@ -50,6 +50,96 @@ func DeleteChannel(done <-chan *net.UDPAddr, ch map[string]chan []byte, verbose 
 	}
 }
 
+
+func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmation chan<- bool, done <-chan *net.UDPAddr, get <-chan *net.UDPAddr, out chan<- chan []byte, verbose *bool){
+	ch := map[string](chan []byte) {}
+	for{
+		select{
+		case d := <- done:
+			if *verbose {
+      	_, present := ch[d.String()]
+      	if present {
+        	fmt.Println(d, " channel in map and scheduled for deletion")
+      	} else {
+        	fmt.Println(d, " channel not in map, something is off")
+      	}
+    	}
+
+    	close(ch[d.String()])
+    	delete(ch, d.String())
+
+    	if *verbose {
+      	_, present := ch[d.String()]
+      	if present {
+        	fmt.Println(d, " was not deleted")
+      	} else {
+        	fmt.Println(d, " deleted")
+      	}
+    }
+
+		case a := <- add:
+			if *verbose{
+				_, present := ch[a.String()]
+				if present {
+					fmt.Println(a, " channel already in map, something is off")
+				} else {
+					fmt.Println(a, " to be added to channels")
+				}
+			}
+
+			ch[a.String()] = make(chan []byte)
+			
+			if *verbose {
+				_, present := ch[a.String()]
+				if present {
+					fmt.Println(a, " successfully added to channels")
+				} else {
+					fmt.Println(a, " not added to channels, something is off")
+				}
+			}
+
+		case s := <- send:
+			_,present := ch[s.Addr.String()]
+			if present{
+				if *verbose {
+					fmt.Println(s.Addr, " is available")
+				}
+
+				ch[s.Addr.String()] <- s.Content
+				sendConfirmation <- true
+
+				if *verbose {
+					fmt.Println(s.Content, " sent to ", s.Addr)
+				}
+			} else {
+				if *verbose {
+					fmt.Println("No handler for ", s.Content, " on channel for ", s.Addr)
+				}
+				sendConfirmation <- false
+			}
+		
+		case g := <- get:
+			_,present := ch[g.String()]
+			if present {
+				if *verbose { 
+					fmt.Println(g, " is present in channels")
+				}
+				out <- ch[g.String()]
+			} else {
+				if *verbose {
+					fmt.Println(g, " is not present in channels")
+				}
+				out <- nil
+			}
+		}
+	}
+}
+
+type sendPair struct{
+	Addr *net.UDPAddr
+	Content []byte
+}
+
 func WriteFile(in <-chan *tftp.File, m map[string][]byte, verbose *bool) {
 	for r := range in {
 		if *verbose {
@@ -74,18 +164,21 @@ func main() {
 	verbose := flag.Bool("verbose", false, "a bool")
 	flag.Parse()
 
-	/* local memory for storing files */
-	m := map[string][]byte{} //creates map of empty files
-
-	/* map of channels to communicate with routines handling read/write requests */
-	ch := map[string](chan []byte){}
-
-	/* channel for the one deleter go routine */
+	/* handler for map of channels to communicate with routines handling read/write requests */
+	add := make(chan *net.UDPAddr)
+	send := make(chan sendPair)
 	done := make(chan *net.UDPAddr)
-	defer close(done)
-	go DeleteChannel(done, ch, verbose)
+	getChannel := make(chan *net.UDPAddr)
+	gottenChannel := make(chan chan []byte)
+	sendConfirmation := make(chan bool)
+	defer close(gottenChannel)
+	defer close(sendConfirmation)
+	go ChannelHandler(add, send, sendConfirmation, done, getChannel, gottenChannel, verbose)
 
-	/* channel for the one writer go routine */
+	/* local memory for storing files */
+	m := map[string][]byte{}
+
+	/* channel for the file writer go routine */
 	newFile := make(chan *tftp.File)
 	defer close(newFile)
 	go WriteFile(newFile, m, verbose)
@@ -127,8 +220,12 @@ func main() {
 			} else {
 				_, present := m[filename]
 				if present {
-					ch[addr.String()] = make(chan []byte)
-					go tftp.HandleRRQ(filename, ch[addr.String()], done, ServerConn, addr, m[filename], verbose)
+					add <- addr
+					getChannel <- addr
+					temp := <- gottenChannel
+					if temp != nil {
+						go tftp.HandleRRQ(filename, temp, done, ServerConn, addr, m[filename], verbose)
+					}
 				} else {
 					errCode := []byte{0, 1}
 					errMsg := filename + " not found"
@@ -159,12 +256,12 @@ func main() {
 					}
 					tftp.SendERRORTo(errCode, errMsg, ServerConn, addr)
 				} else {
-					ch[addr.String()] = make(chan []byte)
-					_, present := ch[addr.String()]
-					if present && *verbose {
-						fmt.Println(addr, " added successfully to map")
+					add <- addr
+					getChannel <- addr
+					temp := <- gottenChannel
+					if temp != nil {
+						go tftp.HandleWRQ(filename, temp, done, ServerConn, addr, newFile, verbose)
 					}
-					go tftp.HandleWRQ(filename, ch[addr.String()], done, ServerConn, addr, newFile, verbose)
 				}
 			}
 
@@ -173,13 +270,9 @@ func main() {
 			if *verbose {
 				fmt.Println("  Recieved ", string(buf[0:n]), " from ", addr, " as DATA")
 			}
-			_, present := ch[addr.String()]
-			if present {
-				if *verbose {
-					fmt.Println("  ", addr, " channel is present")
-				}
-				ch[addr.String()] <- buf[0:n]
-			} else {
+			send <- sendPair{addr, buf[0:n]}
+			sent := <- sendConfirmation
+			if !sent {
 				errCode := []byte{0, 5}
 				errMsg := "No write request associated with this return address"
 				if *verbose {
@@ -193,13 +286,9 @@ func main() {
 			if *verbose {
 				fmt.Println("    Recieved ", string(buf[0:n]), " from ", addr, " as ACK")
 			}
-			_, present := ch[addr.String()]
-			if present {
-				if *verbose {
-					fmt.Println("    ", addr, " channel is present")
-				}
-				ch[addr.String()] <- buf[0:n]
-			} else {
+			send <- sendPair{addr, buf[0:n]}
+			sent := <- sendConfirmation
+			if !sent {
 				errCode := []byte{0, 5}
 				errMsg := "No read request associated with this return address"
 				if *verbose {
