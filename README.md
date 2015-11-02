@@ -4,7 +4,7 @@ Instructions to Build:
 
 If you don't already have Go installed, follow these instructions: https://golang.org/doc/install
 
-If you don't already have copies of the server and tftp folders, you can download archives of them from github.com/cewillis001/server and github.com/cewillis001/tftp, respectively.
+If you don't already have copies of the server and tftp folders, you can download archives of them from https://github.com/cewillis001/server and https://github.com/cewillis001/tftp, respectively.
 
 Unzip the files and put the tftp and server folders in the directory you usually keep Go packages. 
 If you went all the way through those installation instructions above, the directory structure
