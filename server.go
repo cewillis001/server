@@ -23,34 +23,34 @@ func CheckError(err error) {
 	}
 }
 
-func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmation chan<- bool, done <-chan *net.UDPAddr, get <-chan *net.UDPAddr, out chan<- chan []byte, verbose *bool){
-	ch := map[string](chan []byte) {}
-	for{
-		select{
-		case d := <- done:
+func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmation chan<- bool, done <-chan *net.UDPAddr, get <-chan *net.UDPAddr, out chan<- chan []byte, verbose *bool) {
+	ch := map[string](chan []byte){}
+	for {
+		select {
+		case d := <-done:
 			if *verbose {
-      	_, present := ch[d.String()]
-      	if present {
-        	fmt.Println(d, " channel in map and scheduled for deletion")
-      	} else {
-        	fmt.Println(d, " channel not in map, something is off")
-      	}
-    	}
+				_, present := ch[d.String()]
+				if present {
+					fmt.Println(d, " channel in map and scheduled for deletion")
+				} else {
+					fmt.Println(d, " channel not in map, something is off")
+				}
+			}
 
-    	close(ch[d.String()])
-    	delete(ch, d.String())
+			close(ch[d.String()])
+			delete(ch, d.String())
 
-    	if *verbose {
-      	_, present := ch[d.String()]
-      	if present {
-        	fmt.Println(d, " was not deleted")
-      	} else {
-        	fmt.Println(d, " deleted")
-      	}
-    }
+			if *verbose {
+				_, present := ch[d.String()]
+				if present {
+					fmt.Println(d, " was not deleted")
+				} else {
+					fmt.Println(d, " deleted")
+				}
+			}
 
-		case a := <- add:
-			if *verbose{
+		case a := <-add:
+			if *verbose {
 				_, present := ch[a.String()]
 				if present {
 					fmt.Println(a, " channel already in map, something is off")
@@ -60,7 +60,7 @@ func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmat
 			}
 
 			ch[a.String()] = make(chan []byte)
-			
+
 			if *verbose {
 				_, present := ch[a.String()]
 				if present {
@@ -70,9 +70,9 @@ func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmat
 				}
 			}
 
-		case s := <- send:
-			_,present := ch[s.Addr.String()]
-			if present{
+		case s := <-send:
+			_, present := ch[s.Addr.String()]
+			if present {
 				if *verbose {
 					fmt.Println(s.Addr, " is available")
 				}
@@ -89,11 +89,11 @@ func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmat
 				}
 				sendConfirmation <- false
 			}
-		
-		case g := <- get:
-			_,present := ch[g.String()]
+
+		case g := <-get:
+			_, present := ch[g.String()]
 			if present {
-				if *verbose { 
+				if *verbose {
 					fmt.Println(g, " is present in channels")
 				}
 				out <- ch[g.String()]
@@ -107,8 +107,8 @@ func ChannelHandler(add <-chan *net.UDPAddr, send <-chan sendPair, sendConfirmat
 	}
 }
 
-type sendPair struct{
-	Addr *net.UDPAddr
+type sendPair struct {
+	Addr    *net.UDPAddr
 	Content []byte
 }
 
@@ -194,7 +194,7 @@ func main() {
 				if present {
 					add <- addr
 					getChannel <- addr
-					temp := <- gottenChannel
+					temp := <-gottenChannel
 					if temp != nil {
 						go tftp.HandleRRQ(filename, temp, done, ServerConn, addr, m[filename], verbose)
 					}
@@ -230,7 +230,7 @@ func main() {
 				} else {
 					add <- addr
 					getChannel <- addr
-					temp := <- gottenChannel
+					temp := <-gottenChannel
 					if temp != nil {
 						go tftp.HandleWRQ(filename, temp, done, ServerConn, addr, newFile, verbose)
 					}
@@ -243,7 +243,7 @@ func main() {
 				fmt.Println("  Recieved ", string(buf[0:n]), " from ", addr, " as DATA")
 			}
 			send <- sendPair{addr, buf[0:n]}
-			sent := <- sendConfirmation
+			sent := <-sendConfirmation
 			if !sent {
 				errCode := []byte{0, 5}
 				errMsg := "No write request associated with this return address"
@@ -259,7 +259,7 @@ func main() {
 				fmt.Println("    Recieved ", string(buf[0:n]), " from ", addr, " as ACK")
 			}
 			send <- sendPair{addr, buf[0:n]}
-			sent := <- sendConfirmation
+			sent := <-sendConfirmation
 			if !sent {
 				errCode := []byte{0, 5}
 				errMsg := "No read request associated with this return address"
