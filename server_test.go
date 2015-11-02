@@ -14,6 +14,11 @@ import (
 
 var longFile string = "Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean massa. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec quam felis, ultricies nec, pellentesque eu, pretium quis, sem. Nulla consequat massa quis enim. Donec pede justo, fringilla vel, aliquet nec, vulputate eget, arcu. In enim justo, rhoncus ut, imperdiet a, venenatis vitae, justo. Nullam dictum felis eu pede mollis pretium. Integer tincidunt. Cras dapibus. Vivamus elementum semper nisi. Aenean vulputate eleifend tellus. Aenean leo ligula, porttitor eu,"
 
+//int controlling how many go routines to spawn for concurrency test
+//set low initially so a verbose test of the server is still manageable to read
+//max effective is about 250 on my machine, running Ubuntu 14.04 x64 with 512 Mb RAM
+var lots int = 5
+
 func checkError(err error) {
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -230,7 +235,7 @@ func TestOneWRQ(*testing.T) {
 } // */
 
 func TestManyWRQ(*testing.T) {
-	for i := 0; i < 5; i++ {
+	for i := 0; i < lots; i++ {
 		go sendFullWrite("TestManyWRQ"+strconv.Itoa(i), "Hello, World "+strconv.Itoa(i)+"! "+longFile)
 	}
 } // */
@@ -255,7 +260,7 @@ func TestOneRRQ(t *testing.T) {
 
 func TestManyRRQ(*testing.T) {
 	sendFullWrite("TestManyRRQ", "Testing many reads! "+longFile)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < lots; i++ {
 		go sendFullRead("TestManyRRQ")
 	}
 } // */
